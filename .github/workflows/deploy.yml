@@ -10,7 +10,7 @@ on:
 env:
   IMAGE_NAME: legacy
   REGISTRY: registry.digitalocean.com/coderspace-backend202
-  CLUSTER_NAME: do-ams3-k8s-1-35-1-do-2-ams3-1775133809913
+  CLUSTER_NAME: 9043aad4-46d9-4730-b865-941f2dff244d
   NAMESPACE: default
 
 jobs:
