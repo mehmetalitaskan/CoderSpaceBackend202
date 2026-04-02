@@ -3,3 +3,4 @@
 legacy-codes/k8s/db-secret.yaml
 *kubeconfig.yaml
 *.kubeconfig
+.DS_Store
