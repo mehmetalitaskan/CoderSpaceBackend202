@@ -2,22 +2,20 @@
 # Stage 1 — Builder
 # Maven bağımlılıkları önce ayrı katmanda cache'lenir; sadece kaynak kod
 # değiştiğinde Maven tekrar çalışır — build süresi önemli ölçüde kısalır.
+# maven:3.9-eclipse-temurin-21-alpine → mvnw wrapper dosyalarına gerek yok.
 # =============================================================================
-FROM eclipse-temurin:21-jdk-alpine AS builder
+FROM maven:3.9-eclipse-temurin-21-alpine AS builder
 
 WORKDIR /build
 
 # Bağımlılık katmanı: pom.xml ayrı COPY edilir.
 # Bu katman, yalnızca pom.xml değiştiğinde yeniden indirilir.
 COPY pom.xml .
-COPY .mvn/ .mvn/
-COPY mvnw .
-
-RUN chmod +x mvnw && ./mvnw dependency:go-offline -q
+RUN mvn dependency:go-offline -q
 
 # Kaynak kodu kopyala ve jar üret
 COPY src/ src/
-RUN ./mvnw package -DskipTests -q
+RUN mvn package -DskipTests -q
 
 # =============================================================================
 # Stage 2 — Runtime
