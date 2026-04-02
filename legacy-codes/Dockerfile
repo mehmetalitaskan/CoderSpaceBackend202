@@ -2,7 +2,7 @@
 #  AKBANK — Legacy Document Service
 #  Java 8  |  Bloklayan (Blocking) Mimari  |  "The Legacy Rescue"
 # ─────────────────────────────────────────────────────────────────
-FROM openjdk:8-jdk-alpine
+FROM eclipse-temurin:8-jdk-alpine
 
 LABEL maintainer="Akbank Legacy Team"
 LABEL description="Java 8 blocking REST service — demonstration of legacy pain points"
