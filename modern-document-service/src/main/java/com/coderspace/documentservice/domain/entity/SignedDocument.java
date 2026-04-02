@@ -27,7 +27,7 @@ public class SignedDocument {
     @Column(nullable = false, length = 100)
     private String customerName;
 
-    @Column(nullable = false, length = 128)
+    @Column(nullable = false, length = 128, columnDefinition = "varchar(128) default 'LEGACY_NO_SIGNATURE'")
     private String signatureHash;
 
     @CreationTimestamp
