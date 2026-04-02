@@ -2,7 +2,7 @@
 #  AKBANK — Legacy Document Service
 #  Java 8  |  Bloklayan (Blocking) Mimari  |  "The Legacy Rescue"
 # ─────────────────────────────────────────────────────────────────
-FROM eclipse-temurin:8-jdk-alpine
+FROM eclipse-temurin:21-jdk-alpine
 
 LABEL maintainer="Akbank Legacy Team"
 LABEL description="Java 8 blocking REST service — demonstration of legacy pain points"
@@ -22,4 +22,4 @@ RUN javac -cp postgresql.jar LegacyDocumentService.java
 EXPOSE 8080
 
 # Servisi başlat
-CMD ["java", "-Xmx256m", "-Xms64m", "-Djdk.tls.client.protocols=TLSv1.2", "-Djdk.tls.disabledAlgorithms=", "-cp", ".:postgresql.jar", "LegacyDocumentService"]
+CMD ["java", "-Xmx256m", "-Xms64m", "-cp", ".:postgresql.jar", "LegacyDocumentService"]
