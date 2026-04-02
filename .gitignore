@@ -11,3 +11,4 @@ legacy-codes/postgresql.jar
 **/*.iml
 **/out/
 **/*.class
+modern-document-service/k8s/db-secret.yaml

@@ -20,5 +20,6 @@ public class ModernDocumentServiceApplication {
         log.info("=== Modern Document Service Started ===");
         log.info("=== Virtual Threads: ENABLED ===");
         log.info("=== Legacy Bottleneck: RESOLVED ===");
+        log.info("=== DB Secret: modern-db-secret applied ===");
     }
 }
