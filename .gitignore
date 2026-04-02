@@ -1,6 +1,13 @@
 # Kubernetes kubeconfig dosyaları - token içerdiği için gönderilmez
 *kubeconfig*
 legacy-codes/k8s/db-secret.yaml
+legacy-codes/postgresql.jar
 *kubeconfig.yaml
 *.kubeconfig
 .DS_Store
+
+# IntelliJ IDEA
+**/.idea/
+**/*.iml
+**/out/
+**/*.class

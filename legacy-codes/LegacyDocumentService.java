@@ -113,6 +113,8 @@ public class LegacyDocumentService {
         server.createContext("/api/documents/sign",  new SignDocumentHandler());
         server.createContext("/api/documents/signed",new SignedListHandler());
         server.createContext("/api/health",          new HealthHandler());
+        server.createContext("/api/documents/content", new SignedContentHandler());
+        server.createContext("/api/documents/pdf",     new SignedPdfHandler());
         server.createContext("/api/status",          new StatusHandler());
 
         server.start();
@@ -287,7 +289,10 @@ public class LegacyDocumentService {
                     + ",\"customerName\":\"" + customerName + "\""
                     + ",\"templateId\":" + templateId
                     + ",\"signatureLength\":" + signatureHex.length()
-                    + ",\"status\":\"SIGNED\"}";
+                    + ",\"status\":\"SIGNED\""
+                    + ",\"documentUrl\":\"http://188.166.202.183/api/documents/pdf?id=" + newDocId + "\""
+                    + ",\"localUrl\":\"http://localhost:8080/api/documents/pdf?id=" + newDocId + "\""
+                    + "}";
                 sendResponse(ex, 200, resp);
 
             } finally {
@@ -347,6 +352,259 @@ public class LegacyDocumentService {
                 sb.append("]}");
                 sendResponse(ex, 200, sb.toString());
 
+            } finally {
+                activeRequests.decrementAndGet();
+            }
+        }
+    }
+
+    // ================================================================
+    // GET /api/documents/pdf?id=X  — Imzali dokumani PDF olarak dondur
+    // ================================================================
+    class SignedPdfHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange ex) throws IOException {
+            totalRequests.incrementAndGet();
+            activeRequests.incrementAndGet();
+            try {
+                if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+                    sendResponse(ex, 405, "{\"error\":\"Method Not Allowed\"}");
+                    return;
+                }
+
+                String query = ex.getRequestURI().getQuery();
+                int docId = -1;
+                if (query != null) {
+                    for (String param : query.split("&")) {
+                        if (param.startsWith("id=")) {
+                            try { docId = Integer.parseInt(param.substring(3)); } catch (NumberFormatException ignored) {}
+                        }
+                    }
+                }
+                if (docId < 0) {
+                    sendResponse(ex, 400, "{\"error\":\"id parametresi zorunludur. Ornek: /api/documents/pdf?id=1\"}");
+                    return;
+                }
+
+                String customerName = "Musteri", customerId = "-", templateName = "Sozlesme",
+                       version = "-", signedAt = "-", content = "Icerik bulunamadi.";
+
+                // SORUN #5 — yeni baglanti ac
+                try (Connection conn = getNewConnection()) {
+                    String sql = "SELECT sd.id, sd.customer_id, sd.customer_name, sd.signed_at, "
+                        + "dt.name as template_name, dt.version, dt.content "
+                        + "FROM signed_documents sd "
+                        + "JOIN document_templates dt ON sd.template_id = dt.id "
+                        + "WHERE sd.id = ?";
+                    try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                        ps.setInt(1, docId);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (!rs.next()) {
+                                sendResponse(ex, 404, "{\"error\":\"Document not found: " + docId + "\"}");
+                                return;
+                            }
+                            customerName = rs.getString("customer_name");
+                            customerId   = rs.getString("customer_id");
+                            templateName = rs.getString("template_name");
+                            version      = rs.getString("version");
+                            signedAt     = String.valueOf(rs.getTimestamp("signed_at"));
+                            content      = rs.getString("content")
+                                .replace("{{MUSTERI_ADI}}", customerName)
+                                .replace("{{TC_NO}}",       customerId)
+                                .replace("{{FIRMA_ADI}}",   customerName)
+                                .replace("{{KREDI_TUTARI}}","0")
+                                .replace("{{VADE}}",        "0")
+                                .replace("{{FAIZ}}",        "0")
+                                .replace("{{LIMIT}}",       "0")
+                                .replace("{{KART_TURU}}",   "Standart")
+                                .replace("{{ADRES}}",       "-")
+                                .replace("{{VERGI_NO}}",    customerId);
+                        }
+                    }
+                } catch (Exception e) {
+                    sendResponse(ex, 500, "{\"error\":\"DB error: " + e.getMessage().replace("\"","'") + "\"}");
+                    return;
+                }
+
+                byte[] pdfBytes = buildPdf(docId, customerName, customerId, templateName, version, signedAt, content);
+                ex.getResponseHeaders().set("Content-Type", "application/pdf");
+                ex.getResponseHeaders().set("Content-Disposition",
+                    "inline; filename=\"imzali-dokuman-" + docId + ".pdf\"");
+                ex.sendResponseHeaders(200, pdfBytes.length);
+                try (OutputStream os = ex.getResponseBody()) {
+                    os.write(pdfBytes);
+                }
+            } finally {
+                activeRequests.decrementAndGet();
+            }
+        }
+
+        private byte[] buildPdf(int docId, String customerName, String customerId,
+                                String templateName, String version, String signedAt,
+                                String content) throws IOException {
+            // Turkce karakterleri ASCII'ye donustur (Type1 font sinirlamasi)
+            String safeName     = toAscii(customerName);
+            String safeTpl      = toAscii(templateName);
+            String safeContent  = toAscii(content);
+            String safeDate     = signedAt.length() > 19 ? signedAt.substring(0, 19) : signedAt;
+
+            // PDF stream icerik satirlari (max 80 karakter)
+            List<String> lines = new ArrayList<>();
+            lines.add("IMZALI DOKUMAN #" + docId);
+            lines.add("==================================================");
+            lines.add("Sabloon : " + safeTpl + " (" + version + ")");
+            lines.add("Musteri : " + safeName);
+            lines.add("Musteri ID: " + customerId);
+            lines.add("Imza Tarihi: " + safeDate);
+            lines.add("");
+            lines.add("--- SOZLESME ICERIK ---");
+            // Uzun metni 75 karlik satirlara bol
+            for (String raw : safeContent.split("\\n")) {
+                raw = raw.trim();
+                while (raw.length() > 75) {
+                    lines.add(raw.substring(0, 75));
+                    raw = raw.substring(75);
+                }
+                if (!raw.isEmpty()) lines.add(raw);
+            }
+            lines.add("");
+            lines.add("==================================================");
+            lines.add("Bu dokuman Legacy Document Service tarafindan");
+            lines.add("otomatik olarak imzalanmistir.");
+
+            // PDF stream olustur
+            StringBuilder stream = new StringBuilder();
+            stream.append("BT\n");
+            stream.append("/F1 13 Tf\n");
+            float y = 750;
+            for (String line : lines) {
+                String safe = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)");
+                stream.append(String.format("50 %.0f Td (%s) Tj\n", y, safe));
+                y -= 16;
+                if (y < 50) { stream.append("ET\nBT\n/F1 13 Tf\n"); y = 750; }
+            }
+            stream.append("ET\n");
+            byte[] streamBytes = stream.toString().getBytes("ISO-8859-1");
+
+            // PDF yapisini olustur
+            StringBuilder pdf = new StringBuilder();
+            pdf.append("%PDF-1.4\n");
+
+            int[] offsets = new int[6];
+            offsets[1] = pdf.length();
+            pdf.append("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+            offsets[2] = pdf.length();
+            pdf.append("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+            offsets[3] = pdf.length();
+            pdf.append("3 0 obj\n<< /Type /Page /Parent 2 0 R "
+                + "/Resources << /Font << /F1 4 0 R >> >> "
+                + "/MediaBox [0 0 595 842] /Contents 5 0 R >>\nendobj\n");
+            offsets[4] = pdf.length();
+            pdf.append("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
+                + "/Encoding /WinAnsiEncoding >>\nendobj\n");
+            offsets[5] = pdf.length();
+            pdf.append("5 0 obj\n<< /Length " + streamBytes.length + " >>\nstream\n");
+
+            byte[] pdfStart  = pdf.toString().getBytes("ISO-8859-1");
+            byte[] pdfMiddle = "\nendstream\nendobj\n".getBytes("ISO-8859-1");
+
+            int xrefOffset = pdfStart.length + streamBytes.length + pdfMiddle.length;
+            StringBuilder xref = new StringBuilder();
+            xref.append("xref\n0 6\n0000000000 65535 f \n");
+            for (int i = 1; i <= 5; i++)
+                xref.append(String.format("%010d 00000 n \n", offsets[i]));
+            xref.append("trailer\n<< /Size 6 /Root 1 0 R >>\n");
+            xref.append("startxref\n").append(xrefOffset).append("\n%%EOF\n");
+            byte[] pdfEnd = xref.toString().getBytes("ISO-8859-1");
+
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            out.write(pdfStart);
+            out.write(streamBytes);
+            out.write(pdfMiddle);
+            out.write(pdfEnd);
+            return out.toByteArray();
+        }
+
+        private String toAscii(String s) {
+            if (s == null) return "";
+            return s.replace("\u00e7","c").replace("\u00c7","C")
+                    .replace("\u011f","g").replace("\u011e","G")
+                    .replace("\u0131","i").replace("\u0130","I")
+                    .replace("\u00f6","o").replace("\u00d6","O")
+                    .replace("\u015f","s").replace("\u015e","S")
+                    .replace("\u00fc","u").replace("\u00dc","U")
+                    .replace("\u00e2","a").replace("\u00ee","i").replace("\u00fb","u");
+        }
+    }
+
+    // ================================================================
+    // GET /api/documents/content?id=X  — İmzalı dokümanın şablon içeriğini göster
+    // ================================================================
+    class SignedContentHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange ex) throws IOException {
+            totalRequests.incrementAndGet();
+            activeRequests.incrementAndGet();
+            try {
+                if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+                    sendResponse(ex, 405, "{\"error\":\"Method Not Allowed\"}");
+                    return;
+                }
+
+                String query = ex.getRequestURI().getQuery();
+                int docId = -1;
+                if (query != null) {
+                    for (String param : query.split("&")) {
+                        if (param.startsWith("id=")) {
+                            try { docId = Integer.parseInt(param.substring(3)); } catch (NumberFormatException ignored) {}
+                        }
+                    }
+                }
+                // /api/documents/signed/123 path formatını da destekle
+                String path = ex.getRequestURI().getPath();
+                String[] parts = path.split("/");
+                if (docId < 0 && parts.length > 0) {
+                    try { docId = Integer.parseInt(parts[parts.length - 1]); } catch (NumberFormatException ignored) {}
+                }
+
+                if (docId < 0) {
+                    sendResponse(ex, 400, "{\"error\":\"id parametresi zorunludur. Örnek: /api/documents/content?id=1\"}");
+                    return;
+                }
+
+                // SORUN #5 — yeni bağlantı aç
+                try (Connection conn = getNewConnection()) {
+                    String sql = "SELECT sd.id, sd.customer_id, sd.customer_name, sd.signed_at, "
+                        + "dt.name as template_name, dt.version, dt.content "
+                        + "FROM signed_documents sd "
+                        + "JOIN document_templates dt ON sd.template_id = dt.id "
+                        + "WHERE sd.id = ?";
+                    try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                        ps.setInt(1, docId);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (!rs.next()) {
+                                sendResponse(ex, 404, "{\"error\":\"Document not found: " + docId + "\"}");
+                                return;
+                            }
+                            String content = rs.getString("content")
+                                .replace("{{MUSTERI_ADI}}", rs.getString("customer_name"))
+                                .replace("{{TC_NO}}", rs.getString("customer_id"))
+                                .replace("{{FIRMA_ADI}}", rs.getString("customer_name"))
+                                .replace("\"", "'");
+                            String body = "{\"id\":" + rs.getInt("id")
+                                + ",\"customerId\":\"" + rs.getString("customer_id") + "\""
+                                + ",\"customerName\":\"" + rs.getString("customer_name") + "\""
+                                + ",\"templateName\":\"" + rs.getString("template_name") + "\""
+                                + ",\"version\":\"" + rs.getString("version") + "\""
+                                + ",\"signedAt\":\"" + rs.getTimestamp("signed_at") + "\""
+                                + ",\"content\":\"" + content.replace("\n", "\\n") + "\""
+                                + "}";
+                            sendResponse(ex, 200, body);
+                        }
+                    }
+                } catch (Exception e) {
+                    sendResponse(ex, 500, "{\"error\":\"DB error: " + e.getMessage().replace("\"","'") + "\"}");
+                }
             } finally {
                 activeRequests.decrementAndGet();
             }

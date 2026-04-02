@@ -99,6 +99,22 @@
       }
     },
     {
+      "name": "4 — İmzalı Doküman PDF İndir",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/documents/pdf?id=1",
+        "description": "İmzalanmış dokümanı PDF olarak indirir. id parametresini /api/documents/sign yanıtındaki documentId ile değiştirin. Tarayıcıda açılabilir veya Postman'da 'Save Response' ile kaydedilebilir."
+      }
+    },
+    {
+      "name": "4 — İmzalı Doküman İçeriğini Görüntüle",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/documents/content?id=1",
+        "description": "İmzalanmış bir dokümanın şablon içeriğini gösterir. id parametresini /api/documents/sign yanıtındaki documentId ile değiştirin."
+      }
+    },
+    {
       "name": "4 — İmzalı Dokümanları Listele",
       "request": {
         "method": "GET",
@@ -116,25 +132,98 @@
     },
     {
       "name": "6 — [DEMO] Thread Havuzunu Doldur (11 Eşzamanlı İstek)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.environment.set('stress_times', JSON.stringify([]));",
+              "const url = pm.variables.get('baseUrl') + '/api/documents/sign';",
+              "for (let i = 1; i <= 10; i++) {",
+              "  const reqBody = JSON.stringify({ templateId: 1, customerId: 'MUS-STRESS-' + i, customerName: 'Stres Musterisi ' + i, signatureData: 'U3RyZXNzVGVzdA==' });",
+              "  pm.sendRequest({ url, method: 'POST', header: [{ key: 'Content-Type', value: 'application/json' }], body: { mode: 'raw', raw: reqBody } },",
+              "    function(err, res) {",
+              "      const times = JSON.parse(pm.environment.get('stress_times') || '[]');",
+              "      times.push({ id: i, time: res ? res.responseTime : 9999, status: err ? 'HATA' : 'OK' });",
+              "      pm.environment.set('stress_times', JSON.stringify(times));",
+              "      console.log('[STRESS] Istek #' + i + ' -> ' + (err ? 'HATA' : res.responseTime + 'ms'));",
+              "    }",
+              "  );",
+              "}",
+              "console.log('>>> 10 istek arka planda ateslenidi! Ana istek #11 gonderiliyor...');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const mainTime = pm.response.responseTime;",
+              "const allTimes = JSON.parse(pm.environment.get('stress_times') || '[]');",
+              "allTimes.push({ id: 11, time: mainTime, status: 'ANA ISTEK' });",
+              "allTimes.sort((a, b) => a.id - b.id);",
+              "const maxTime = Math.max(...allTimes.map(t => t.time));",
+              "",
+              "const template = `",
+              "<style>",
+              "  body { font-family: Arial, sans-serif; padding: 20px; background: #1e1e2e; color: #cdd6f4; }",
+              "  h2 { color: #89b4fa; margin-bottom: 4px; }",
+              "  .subtitle { color: #a6adc8; font-size: 13px; margin-bottom: 20px; }",
+              "  .row { display: flex; align-items: center; margin: 7px 0; }",
+              "  .lbl { width: 110px; font-size: 13px; color: #cdd6f4; }",
+              "  .bar { height: 30px; border-radius: 5px; display: flex; align-items: center; padding: 0 12px; font-size: 12px; font-weight: bold; color: #fff; min-width: 70px; transition: width 0.3s; }",
+              "  .ok   { background: #40a02b; }",
+              "  .slow { background: #e64553; }",
+              "  .wait { background: #fe640b; }",
+              "  .tag  { margin-left: 12px; font-size: 12px; }",
+              "  .note { margin-top: 20px; padding: 12px; background: #313244; border-radius: 8px; font-size: 13px; color: #f9e2af; }",
+              "</style>",
+              "<body>",
+              "  <h2>🧵 Thread Havuzu Tikanma Testi</h2>",
+              "  <div class='subtitle'>Max Thread Havuzu: 10 | Her istek ~3.3 sn | 11. istek thread icin bekledi</div>",
+              "  {{#each rows}}",
+              "  <div class='row'>",
+              "    <div class='lbl'>Istek #{{id}}</div>",
+              "    <div class='bar {{cls}}' style='width:{{w}}px'>{{time}}ms</div>",
+              "    <div class='tag'>{{tag}}</div>",
+              "  </div>",
+              "  {{/each}}",
+              "  <div class='note'>",
+              "    ⚠️ SORUN #1: Thread havuzu (max=10) dolunca 11. istek thread bosalana kadar beklemek zorunda kalir.<br>",
+              "    Yesil = normal sure | Turuncu/Kirmizi = thread havuzu nedeniyle gecikme",
+              "  </div>",
+              "</body>",
+              "`;",
+              "",
+              "const rows = allTimes.map(t => ({",
+              "  id: t.id,",
+              "  time: t.time,",
+              "  w: Math.max(70, Math.round((t.time / maxTime) * 420)),",
+              "  cls: t.time > 6500 ? 'slow' : t.time > 4500 ? 'wait' : 'ok',",
+              "  tag: t.id === 11 ? '⚠️ THREAD BEKLEDI (Ana istek)' : (t.time > 5000 ? '⚠️ Gecikti' : '✅ Normal')",
+              "}));",
+              "",
+              "pm.visualizer.set(template, { rows });",
+              "",
+              "pm.test('11. istek thread havuzu nedeniyle bekledi (>3s)', () => {",
+              "  pm.expect(mainTime).to.be.above(3000);",
+              "});"
+            ]
+          }
+        }
+      ],
       "request": {
         "method": "POST",
         "url": "{{baseUrl}}/api/documents/sign",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"templateId\": 1,\n  \"customerId\": \"MUS-STRESS\",\n  \"customerName\": \"Stres Test Müşterisi\",\n  \"signatureData\": \"U3RyZXNzVGVzdA==\"\n}",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
+          "raw": "{\n  \"templateId\": 1,\n  \"customerId\": \"MUS-STRESS-11\",\n  \"customerName\": \"Stres Test 11 (Kuyrukta Bekleyen)\",\n  \"signatureData\": \"U3RyZXNzVGVzdA==\"\n}",
+          "options": { "raw": { "language": "json" } }
         },
-        "description": "Bu isteği Postman Runner ile 15 kez eşzamanlı çalıştırın. 11. istek ve sonrası thread havuzu dolduğu için KUYRUKTA beklemeye başlar. SORUN #1'i canlı gösterir."
+        "description": "Çalıştır → Pre-request Script 10 isteği arka planda ateşler → Ana istek #11 olarak gönderilir.\n\nSonucu görmek için: Response altında 'Visualize' sekmesine tıkla!\n\nBar chart: Yeşil = normal | Turuncu/Kırmızı = thread havuzu doluydu, bekledi."
       }
     }
   ]
