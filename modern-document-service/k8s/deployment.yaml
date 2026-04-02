@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: modern-document-service
+  namespace: default
+  labels:
+    app: modern-document-service
+spec:
+  replicas: 2  # HA — single point of failure yok
+  selector:
+    matchLabels:
+      app: modern-document-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # Güncelleme sırasında fazladan 1 pod ayağa kalkar
+      maxUnavailable: 0  # Güncelleme sırasında hiçbir pod kapatılmaz → zero-downtime deploy
+  template:
+    metadata:
+      labels:
+        app: modern-document-service
+    spec:
+      containers:
+        - name: modern-document-service
+          image: IMAGE_PLACEHOLDER
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            # FIX #5 — Bağlantı bilgileri Secret'tan gelir, image içine gömülmez
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: modern-db-secret
+                  key: DB_URL
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: modern-db-secret
+                  key: DB_USER
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: modern-db-secret
+                  key: DB_PASS
+          resources:
+            # FIX #1 — Virtual Threads sayesinde daha az bellek/CPU ile çok daha fazla istek karşılanır
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 3

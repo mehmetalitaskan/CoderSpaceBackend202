@@ -1,0 +1,38 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: modern-document-service-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: modern-document-service
+  minReplicas: 2   # Her zaman en az 2 replica — HA garantisi
+  maxReplicas: 10  # Yük altında maksimum 10 replica'ya çıkar
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70  # CPU %70'i geçince scale-out başlar
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80  # Memory %80'i geçince scale-out başlar
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Ani trafik düşüşlerinde scale-down'u 5 dk bekletir
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60  # Her 60 saniyede en fazla 1 pod kaldırılır
+    scaleUp:
+      stabilizationWindowSeconds: 0   # Trafik artışında anında scale-out
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60  # Her 60 saniyede en fazla 2 pod eklenir

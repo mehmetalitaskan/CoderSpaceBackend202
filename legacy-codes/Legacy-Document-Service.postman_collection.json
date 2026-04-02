@@ -138,7 +138,7 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.environment.set('stress_times', JSON.stringify([]));",
+              "pm.globals.set('stress_times', JSON.stringify([]));",
               "const url = pm.variables.get('baseUrl') + '/api/documents/sign';",
               "for (let i = 1; i <= 10; i++) {",
               "  const reqBody = JSON.stringify({ templateId: 1, customerId: 'MUS-STRESS-' + i, customerName: 'Stres Musterisi ' + i, signatureData: 'U3RyZXNzVGVzdA==' });",
@@ -146,7 +146,7 @@
               "    function(err, res) {",
               "      const times = JSON.parse(pm.environment.get('stress_times') || '[]');",
               "      times.push({ id: i, time: res ? res.responseTime : 9999, status: err ? 'HATA' : 'OK' });",
-              "      pm.environment.set('stress_times', JSON.stringify(times));",
+              "      pm.globals.set('stress_times', JSON.stringify(times));",
               "      console.log('[STRESS] Istek #' + i + ' -> ' + (err ? 'HATA' : res.responseTime + 'ms'));",
               "    }",
               "  );",
@@ -161,7 +161,7 @@
             "type": "text/javascript",
             "exec": [
               "const mainTime = pm.response.responseTime;",
-              "const allTimes = JSON.parse(pm.environment.get('stress_times') || '[]');",
+              "const allTimes = JSON.parse(pm.globals.get('stress_times') || '[]');",
               "allTimes.push({ id: 11, time: mainTime, status: 'ANA ISTEK' });",
               "allTimes.sort((a, b) => a.id - b.id);",
               "const maxTime = Math.max(...allTimes.map(t => t.time));",

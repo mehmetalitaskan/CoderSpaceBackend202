@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: modern-document-service
+  namespace: default
+  labels:
+    app: modern-document-service
+spec:
+  type: ClusterIP       # Cluster içi erişim — dışarıya Ingress ile açılır
+  selector:
+    app: modern-document-service
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80          # Service portu (cluster içi)
+      targetPort: 8080  # Pod içindeki Spring Boot portu

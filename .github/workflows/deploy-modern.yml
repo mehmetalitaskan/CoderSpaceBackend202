@@ -1,0 +1,73 @@
+name: modern
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'modern-document-service/**'
+      - '.github/workflows/deploy-modern.yml'
+
+env:
+  IMAGE_NAME: modern
+  REGISTRY: registry.digitalocean.com/coderspace-backend202
+  CLUSTER_NAME: 9043aad4-46d9-4730-b865-941f2dff244d
+  NAMESPACE: default
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DigitalOcean Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.digitalocean.com
+          username: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          password: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Build and push Docker image
+        run: |
+          TAG=${GITHUB_SHA::7}
+          docker build --no-cache \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            modern-document-service/
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Set KUBECONFIG
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG }}" > $HOME/.kube/config
+
+      - name: Deploy to Kubernetes
+        run: |
+          TAG=${GITHUB_SHA::7}
+          sed -i "s|IMAGE_PLACEHOLDER|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG|g" \
+            modern-document-service/k8s/deployment.yaml
+          kubectl apply -f modern-document-service/k8s/
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status deployment/modern-document-service \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=300s
