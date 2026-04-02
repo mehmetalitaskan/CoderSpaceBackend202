@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: legacy
-          image: registry.digitalocean.com/coderspace-backend202/legacy:IMAGE_PLACEHOLDER
+          image: IMAGE_PLACEHOLDER
           ports:
             - containerPort: 8080
           resources:
