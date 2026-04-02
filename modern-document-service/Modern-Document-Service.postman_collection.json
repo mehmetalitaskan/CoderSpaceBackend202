@@ -1,0 +1,591 @@
+{
+  "info": {
+    "name": "Modern Document Service — FIX #1-7",
+    "_postman_id": "modern-document-service",
+    "description": "Java 21 Virtual Threads + Spring Boot 3.2 — Legacy'deki tüm sorunlar çözüldü.\n\n✅ FIX #1 — Virtual Threads: MAX_THREADS=10 yok\n✅ FIX #2 — Blocking I/O yok (Thread.sleep yok)\n✅ FIX #3 — 512KB buffer yok, OOM riski yok\n✅ FIX #4 — RSA KeyPair singleton (CPU israfı yok)\n✅ FIX #5 — HikariCP connection pool\n✅ FIX #6 — PostgreSQL (in-memory HashMap yok)\n✅ FIX #7 — Pagination (SELECT * yok)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string",
+      "description": "Kubernetes'e deploy sonrası LoadBalancer IP ile değiştir"
+    },
+    {
+      "key": "signedDocumentId",
+      "value": "1",
+      "type": "string",
+      "description": "Sign endpoint'ten dönen id — otomatik set edilir"
+    }
+  ],
+  "item": [
+    {
+      "name": "1 — Sağlık Kontrolü",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('Servis UP durumunda', () => {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.status).to.eql('UP');",
+              "  pm.expect(body.version).to.include('MODERN');",
+              "});",
+              "",
+              "const template = `",
+              "<style>body{font-family:Arial,sans-serif;padding:20px;background:#1e1e2e;color:#cdd6f4;}",
+              "h2{color:#a6e3a1;} .box{background:#313244;padding:16px;border-radius:8px;margin:8px 0;}",
+              ".key{color:#89b4fa;font-weight:bold;} .val{color:#a6e3a1;margin-left:8px;}</style>",
+              "<body><h2>✅ Modern Document Service — Sağlık Durumu</h2>",
+              "{{#each fields}}<div class='box'><span class='key'>{{key}}:</span><span class='val'>{{val}}</span></div>{{/each}}",
+              "</body>`;",
+              "",
+              "const body = pm.response.json();",
+              "pm.visualizer.set(template, {",
+              "  fields: Object.entries(body).map(([key, val]) => ({ key, val }))",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/health",
+        "description": "Servis sağlık durumunu döner.\n\nModern: version=2.0.0-MODERN, Virtual Threads aktif.\nLegacy'de Thread.sleep nedeniyle bu endpoint bile gecikiyordu."
+      }
+    },
+    {
+      "name": "2 — Sistem Durumu (FIX Listesi)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('Virtual Thread aktif', () => {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.activeThread.isVirtual).to.be.true;",
+              "});",
+              "",
+              "const template = `",
+              "<style>body{font-family:Arial,sans-serif;padding:20px;background:#1e1e2e;color:#cdd6f4;}",
+              "h2{color:#89b4fa;} .fix{display:flex;align-items:center;padding:8px 12px;margin:6px 0;",
+              "background:#313244;border-radius:6px;font-size:13px;} .icon{margin-right:10px;font-size:16px;}",
+              ".thread{background:#a6e3a1;color:#1e1e2e;padding:4px 10px;border-radius:4px;font-weight:bold;",
+              "font-size:13px;margin-bottom:16px;display:inline-block;}</style>",
+              "<body><h2>🚀 Modern Document Service — Çözülen Sorunlar</h2>",
+              "<div class='thread'>🧵 Aktif Thread: {{threadName}} | Virtual: {{isVirtual}}</div>",
+              "{{#each fixes}}<div class='fix'><span class='icon'>✅</span>{{this}}</div>{{/each}}",
+              "</body>`;",
+              "",
+              "const body = pm.response.json();",
+              "pm.visualizer.set(template, {",
+              "  threadName: body.activeThread.name,",
+              "  isVirtual: body.activeThread.isVirtual,",
+              "  fixes: body.fixedIssues",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/status",
+        "description": "Aktif thread bilgisi ve çözülen legacy sorunlarının listesini döner.\n\nVisualize sekmesinde isVirtual=true görünmeli — Virtual Threads aktif!"
+      }
+    },
+    {
+      "name": "3 — Şablonları Listele (FIX #5 #7)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('Şablon listesi dolu', () => {",
+              "  pm.expect(pm.response.json()).to.be.an('array').that.is.not.empty;",
+              "});",
+              "pm.test(`Yanıt süresi < 500ms (Legacy ~1300ms'di)`, () => {",
+              "  pm.expect(pm.response.responseTime).to.be.below(500);",
+              "});",
+              "",
+              "const template = `",
+              "<style>body{font-family:Arial,sans-serif;padding:20px;background:#1e1e2e;color:#cdd6f4;}",
+              "h2{color:#89b4fa;} .time{font-size:22px;font-weight:bold;color:#a6e3a1;margin:8px 0;}",
+              ".legacy{color:#f38ba8;font-size:14px;text-decoration:line-through;}",
+              ".card{background:#313244;border-radius:8px;padding:12px;margin:8px 0;}",
+              ".name{color:#cba6f7;font-weight:bold;} .ver{color:#89dceb;font-size:12px;margin-left:8px;}</style>",
+              "<body><h2>📋 Şablon Listesi</h2>",
+              "<div class='time'>⚡ {{responseTime}}ms <span class='legacy'>Legacy: ~1300ms</span></div>",
+              "{{#each templates}}<div class='card'>",
+              "<span class='name'>{{name}}</span><span class='ver'>v{{version}}</span>",
+              "<div style='color:#a6adc8;font-size:12px;margin-top:4px;'>{{description}}</div>",
+              "</div>{{/each}}</body>`;",
+              "",
+              "pm.visualizer.set(template, {",
+              "  responseTime: pm.response.responseTime,",
+              "  templates: pm.response.json()",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/templates",
+        "description": "Tüm şablonları listeler.\n\n✅ FIX #5 — HikariCP pool (Legacy'de her istekte yeni bağlantı)\n✅ FIX #7 — Gerçek DB'den gelir (Legacy'de HashMap'te saklıydı)\n\nYanıt süresi Legacy'deki ~1300ms'nin çok altında olmalı."
+      }
+    },
+    {
+      "name": "4 — Bireysel Kredi Sözleşmesi İmzala (FIX #2 #4 #6)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 201 Created', () => pm.response.to.have.status(201));",
+              "pm.test('signatureHash dolu', () => {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.signatureHash).to.be.a('string').and.not.empty;",
+              "  pm.collectionVariables.set('signedDocumentId', body.id);",
+              "});",
+              "pm.test(`Yanıt süresi < 1000ms (Legacy ~3600ms'di)`, () => {",
+              "  pm.expect(pm.response.responseTime).to.be.below(1000);",
+              "});",
+              "",
+              "const template = `",
+              "<style>body{font-family:Arial,sans-serif;padding:20px;background:#1e1e2e;color:#cdd6f4;}",
+              "h2{color:#89b4fa;} .time{font-size:22px;font-weight:bold;color:#a6e3a1;margin:8px 0;}",
+              ".legacy{color:#f38ba8;font-size:14px;text-decoration:line-through;}",
+              ".field{background:#313244;border-radius:6px;padding:10px;margin:6px 0;display:flex;}",
+              ".key{color:#89b4fa;width:140px;font-size:13px;} .val{color:#cdd6f4;font-size:13px;}",
+              ".hash{font-family:monospace;font-size:11px;color:#a6e3a1;word-break:break-all;}</style>",
+              "<body><h2>✅ Belge İmzalandı</h2>",
+              "<div class='time'>⚡ {{responseTime}}ms <span class='legacy'>Legacy: ~3600ms (Thread.sleep!)</span></div>",
+              "<div class='field'><span class='key'>Document ID</span><span class='val'>{{id}}</span></div>",
+              "<div class='field'><span class='key'>Müşteri ID</span><span class='val'>{{customerId}}</span></div>",
+              "<div class='field'><span class='key'>Müşteri Adı</span><span class='val'>{{customerName}}</span></div>",
+              "<div class='field'><span class='key'>Template ID</span><span class='val'>{{templateId}}</span></div>",
+              "<div class='field'><span class='key'>İmza Hash</span><div class='hash'>{{signatureHash}}</div></div>",
+              "</body>`;",
+              "",
+              "const body = pm.response.json();",
+              "pm.visualizer.set(template, {",
+              "  responseTime: pm.response.responseTime,",
+              "  id: body.id,",
+              "  customerId: body.customerId,",
+              "  customerName: body.customerName,",
+              "  templateId: body.templateId,",
+              "  signatureHash: body.signatureHash",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/documents/sign",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"templateId\": 1,\n  \"customerId\": \"12345678901\",\n  \"customerName\": \"Ahmet Yılmaz\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Bireysel Kredi Sözleşmesini imzalar.\n\n✅ FIX #2 — Thread.sleep(3000) YOK → ~50ms\n✅ FIX #4 — RSA KeyPair singleton (her request'te üretilmiyor)\n✅ FIX #6 — PostgreSQL'e kaydedilir (restart'ta kaybolmaz)\n\n⚠️ customerId TAM 11 karakter olmalı (TC Kimlik No formatı)"
+      }
+    },
+    {
+      "name": "4 — Konut Kredisi Sözleşmesi İmzala",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 201 Created', () => pm.response.to.have.status(201));",
+              "pm.test('signatureHash dolu', () => {",
+              "  pm.expect(pm.response.json().signatureHash).to.not.be.empty;",
+              "});",
+              "pm.test(`Yanıt süresi < 1000ms (Legacy ~3600ms'di)`, () => {",
+              "  pm.expect(pm.response.responseTime).to.be.below(1000);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/documents/sign",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"templateId\": 2,\n  \"customerId\": \"98765432100\",\n  \"customerName\": \"Fatma Kaya\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Konut Kredisi şablonu ile imzalama. Thread.sleep yok — anlık yanıt."
+      }
+    },
+    {
+      "name": "4 — Kredi Kartı Başvurusu İmzala",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 201 Created', () => pm.response.to.have.status(201));",
+              "pm.test(`Yanıt süresi < 1000ms`, () => {",
+              "  pm.expect(pm.response.responseTime).to.be.below(1000);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/documents/sign",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"templateId\": 3,\n  \"customerId\": \"11223344556\",\n  \"customerName\": \"Mehmet Demir\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Kredi Kartı şablonu ile imzalama."
+      }
+    },
+    {
+      "name": "5 — [Validation] Geçersiz customerId → 400",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 400 Bad Request', () => pm.response.to.have.status(400));",
+              "pm.test('ErrorResponse formatı tam', () => {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body).to.have.all.keys('timestamp','status','error','message','path');",
+              "  pm.expect(body.status).to.eql(400);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/documents/sign",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"templateId\": 1,\n  \"customerId\": \"123\",\n  \"customerName\": \"Test\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "customerId 3 karakter — @Size(min=11, max=11) ihlali.\n\nBeklenen: 400 Bad Request + standart ErrorResponse formatı\n{ timestamp, status: 400, error, message, path }"
+      }
+    },
+    {
+      "name": "5 — [Validation] Var Olmayan Template → 404",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 404 Not Found', () => pm.response.to.have.status(404));",
+              "pm.test('ErrorResponse formatı tam', () => {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body).to.have.all.keys('timestamp','status','error','message','path');",
+              "  pm.expect(body.status).to.eql(404);",
+              "  pm.expect(body.message).to.include('999');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/documents/sign",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"templateId\": 999,\n  \"customerId\": \"12345678901\",\n  \"customerName\": \"Test Kullanıcı\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "templateId=999 yok → TemplateNotFoundException → 404\n\nGlobalExceptionHandler devreye girer, standart ErrorResponse döner."
+      }
+    },
+    {
+      "name": "6 — İmzalı Belgeleri Listele (FIX #7 Pagination)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('PagedResponse formatı doğru', () => {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body).to.have.all.keys('content','page','size','totalElements','totalPages');",
+              "  pm.expect(body.content).to.be.an('array');",
+              "});",
+              "",
+              "const template = `",
+              "<style>body{font-family:Arial,sans-serif;padding:20px;background:#1e1e2e;color:#cdd6f4;}",
+              "h2{color:#89b4fa;} .meta{background:#313244;border-radius:8px;padding:12px;margin-bottom:16px;",
+              "display:flex;gap:20px;} .stat{text-align:center;} .num{font-size:24px;font-weight:bold;color:#a6e3a1;}",
+              ".lbl{font-size:11px;color:#a6adc8;margin-top:2px;}",
+              ".row{background:#313244;border-radius:6px;padding:10px 14px;margin:5px 0;font-size:12px;",
+              "display:flex;gap:16px;} .id{color:#cba6f7;font-weight:bold;width:40px;}",
+              ".cid{color:#89b4fa;width:100px;} .name{color:#cdd6f4;flex:1;}",
+              ".fix{color:#a6e3a1;font-size:12px;margin-top:12px;padding:10px;background:#1e1e2e;border-radius:6px;}</style>",
+              "<body><h2>📄 İmzalı Belgeler (Sayfalı)</h2>",
+              "<div class='meta'>",
+              "<div class='stat'><div class='num'>{{page}}</div><div class='lbl'>Sayfa</div></div>",
+              "<div class='stat'><div class='num'>{{size}}</div><div class='lbl'>Sayfa Boyutu</div></div>",
+              "<div class='stat'><div class='num'>{{totalElements}}</div><div class='lbl'>Toplam Kayıt</div></div>",
+              "<div class='stat'><div class='num'>{{totalPages}}</div><div class='lbl'>Toplam Sayfa</div></div>",
+              "</div>",
+              "{{#each docs}}<div class='row'><span class='id'>#{{id}}</span>",
+              "<span class='cid'>{{customerId}}</span><span class='name'>{{customerName}}</span></div>{{/each}}",
+              "<div class='fix'>✅ FIX #7 — SELECT * yerine LIMIT/OFFSET ile sayfalı sorgu.<br>Legacy tüm kayıtları RAM'e çekiyordu.</div>",
+              "</body>`;",
+              "",
+              "const body = pm.response.json();",
+              "pm.visualizer.set(template, {",
+              "  page: body.page, size: body.size,",
+              "  totalElements: body.totalElements, totalPages: body.totalPages,",
+              "  docs: body.content.map(d => ({ id: d.id, customerId: d.customerId, customerName: d.customerName }))",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/documents/signed?page=0&size=10",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "documents", "signed"],
+          "query": [
+            { "key": "page", "value": "0" },
+            { "key": "size", "value": "10" }
+          ]
+        },
+        "description": "İmzalı belgeleri sayfalı getirir.\n\n✅ FIX #7 — page/size parametreleriyle LIMIT/OFFSET sorgusu\n\nLegacy: SELECT * → tüm kayıtlar RAM'e\nModern: SELECT ... LIMIT 10 OFFSET 0 → sadece 10 kayıt"
+      }
+    },
+    {
+      "name": "6 — İmzalı Belgeyi ID ile Getir",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('signatureHash dolu', () => {",
+              "  pm.expect(pm.response.json().signatureHash).to.not.be.empty;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/documents/signed/{{signedDocumentId}}",
+        "description": "Belirli bir imzalı belgeyi getirir.\n\n{{signedDocumentId}} değişkeni 'Bireysel Kredi Sözleşmesi İmzala' isteğinden otomatik set edilir."
+      }
+    },
+    {
+      "name": "7 — [DEMO] Virtual Thread Stress Testi — 20 Eşzamanlı İstek (FIX #1)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.globals.set('modern_times', JSON.stringify([]));",
+              "const url = pm.variables.get('baseUrl') + '/api/documents/sign';",
+              "const customers = [",
+              "  ['10000000001','Ayşe Arslan'],['20000000002','Burak Çelik'],",
+              "  ['30000000003','Can Erdoğan'],['40000000004','Deniz Fırat'],",
+              "  ['50000000005','Ece Güneş'],['60000000006','Furkan Hızlı'],",
+              "  ['70000000007','Gizem İpek'],['80000000008','Hakan Işık'],",
+              "  ['90000000009','İrem Karaca'],['11111111110','Jale Koç'],",
+              "  ['22222222221','Kemal Liman'],['33333333332','Lale Mercan'],",
+              "  ['44444444443','Murat Narin'],['55555555554','Nalan Osman'],",
+              "  ['66666666665','Onur Pınar'],['77777777776','Pınar Rüzgar'],",
+              "  ['88888888887','Rıza Sarı'],['99999999998','Selin Taş'],",
+              "  ['12121212129','Tolga Uzun'],['21212121210','Ümit Yıldız']",
+              "];",
+              "for (let i = 0; i < 19; i++) {",
+              "  const [cid, cname] = customers[i];",
+              "  const body = JSON.stringify({ templateId: (i % 3) + 1, customerId: cid, customerName: cname });",
+              "  const start = Date.now();",
+              "  pm.sendRequest({ url, method: 'POST',",
+              "    header: [{ key: 'Content-Type', value: 'application/json' }],",
+              "    body: { mode: 'raw', raw: body } },",
+              "    function(err, res) {",
+              "      const times = JSON.parse(pm.globals.get('modern_times') || '[]');",
+              "      times.push({ id: i + 1, time: res ? res.responseTime : 9999,",
+              "        status: err ? 'HATA' : res.code, isError: !!err });",
+              "      pm.globals.set('modern_times', JSON.stringify(times));",
+              "    }",
+              "  );",
+              "}",
+              "console.log('>>> 19 istek arka planda ateşlendi — ana istek #20 gönderiliyor...');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const mainTime = pm.response.responseTime;",
+              "const allTimes = JSON.parse(pm.globals.get('modern_times') || '[]');",
+              "allTimes.push({ id: 20, time: mainTime, status: pm.response.code, isError: false });",
+              "allTimes.sort((a, b) => a.id - b.id);",
+              "const maxTime = Math.max(...allTimes.map(t => t.time));",
+              "const avgTime = Math.round(allTimes.reduce((s, t) => s + t.time, 0) / allTimes.length);",
+              "",
+              "pm.test('Status 201 Created', () => pm.response.to.have.status(201));",
+              "pm.test('20. istek de hızlı yanıtladı (Virtual Threads bloklamadı)', () => {",
+              "  pm.expect(mainTime).to.be.below(2000);",
+              "});",
+              "",
+              "const template = `",
+              "<style>",
+              "body{font-family:Arial,sans-serif;padding:20px;background:#1e1e2e;color:#cdd6f4;}",
+              "h2{color:#89b4fa;margin-bottom:4px;}",
+              ".subtitle{color:#a6adc8;font-size:13px;margin-bottom:16px;}",
+              ".summary{display:flex;gap:16px;margin-bottom:20px;}",
+              ".stat{background:#313244;padding:12px 20px;border-radius:8px;text-align:center;}",
+              ".num{font-size:26px;font-weight:bold;color:#a6e3a1;}",
+              ".lbl{font-size:11px;color:#a6adc8;margin-top:2px;}",
+              ".row{display:flex;align-items:center;margin:5px 0;}",
+              ".lbl2{width:90px;font-size:12px;color:#cdd6f4;}",
+              ".bar{height:26px;border-radius:4px;display:flex;align-items:center;",
+              "padding:0 10px;font-size:11px;font-weight:bold;color:#fff;min-width:50px;}",
+              ".ok{background:#40a02b;} .mid{background:#df8e1d;}",
+              ".tag{margin-left:10px;font-size:11px;color:#a6adc8;}",
+              ".compare{margin-top:20px;padding:14px;background:#313244;border-radius:8px;}",
+              ".legacy-bar{height:32px;background:#e64553;border-radius:4px;display:flex;",
+              "align-items:center;padding:0 12px;color:#fff;font-weight:bold;font-size:13px;width:420px;}",
+              ".modern-bar{height:32px;background:#40a02b;border-radius:4px;display:flex;",
+              "align-items:center;padding:0 12px;color:#fff;font-weight:bold;font-size:13px;}",
+              ".clbl{font-size:12px;color:#a6adc8;margin-bottom:4px;}</style>",
+              "<body>",
+              "<h2>🧵 Virtual Thread Stress Testi — 20 Eşzamanlı İstek</h2>",
+              "<div class='subtitle'>FIX #1: MAX_THREADS=10 sınırı YOK — tüm istekler aynı anda işlendi</div>",
+              "<div class='summary'>",
+              "<div class='stat'><div class='num'>{{total}}</div><div class='lbl'>Toplam İstek</div></div>",
+              "<div class='stat'><div class='num'>{{avgTime}}ms</div><div class='lbl'>Ortalama Süre</div></div>",
+              "<div class='stat'><div class='num'>{{maxTime}}ms</div><div class='lbl'>Max Süre</div></div>",
+              "<div class='stat'><div class='num'>{{success}}</div><div class='lbl'>Başarılı</div></div>",
+              "</div>",
+              "{{#each rows}}<div class='row'>",
+              "<div class='lbl2'>İstek #{{id}}</div>",
+              "<div class='bar {{cls}}' style='width:{{w}}px'>{{time}}ms</div>",
+              "<div class='tag'>{{tag}}</div></div>{{/each}}",
+              "<div class='compare'>",
+              "<div style='font-weight:bold;color:#89b4fa;margin-bottom:10px;'>⚡ Legacy vs Modern Karşılaştırması (20 eşzamanlı istek)</div>",
+              "<div class='clbl'>Legacy — Thread havuzu dolunca 11-20. istekler sıra bekledi (~36000ms+)</div>",
+              "<div class='legacy-bar'>❌ Legacy: ~3600ms × bekleyen istekler = dakikalar</div>",
+              "<div style='height:8px;'></div>",
+              "<div class='clbl'>Modern — Virtual Threads, tüm istekleri eşzamanlı işledi</div>",
+              "<div class='modern-bar' style='width:{{modernBarW}}px'>✅ Modern: {{avgTime}}ms ortalama</div>",
+              "</div></body>`;",
+              "",
+              "const rows = allTimes.map(t => ({",
+              "  id: t.id, time: t.time,",
+              "  w: Math.max(50, Math.round((t.time / maxTime) * 380)),",
+              "  cls: t.time > 1500 ? 'mid' : 'ok',",
+              "  tag: t.id === 20 ? '← Ana istek' : (t.isError ? '❌ Hata' : '✅')",
+              "}));",
+              "",
+              "pm.visualizer.set(template, {",
+              "  total: allTimes.length,",
+              "  avgTime, maxTime,",
+              "  success: allTimes.filter(t => !t.isError).length,",
+              "  rows,",
+              "  modernBarW: Math.max(80, Math.round((avgTime / 3600) * 420))",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/documents/sign",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"templateId\": 1,\n  \"customerId\": \"99988877760\",\n  \"customerName\": \"Stress Test 20 (Ana İstek)\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Çalıştır → Pre-request Script 19 isteği arka planda ateşler → Ana istek #20 gönderilir.\n\n📊 Sonucu görmek için: Response altında 'Visualize' sekmesine tıkla!\n\nLegacy'de 11. istek thread havuzu dolduğu için sıra beklerdi.\nModern'de Virtual Threads sayesinde tüm 20 istek aynı anda işlenir — hiçbiri beklemez."
+      }
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+spring:
+  application:
+    name: modern-document-service
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/defaultdb}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASS:}
+    # FIX #5 — HikariCP (Spring Boot default)
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # FIX #1 — Virtual Threads (Spring Boot 3.2+)
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus
+  endpoint:
+    health:
+      show-details: always
