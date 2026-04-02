@@ -22,4 +22,4 @@ RUN javac -cp postgresql.jar LegacyDocumentService.java
 EXPOSE 8080
 
 # Servisi başlat
-CMD ["java", "-Xmx256m", "-Xms64m", "-cp", ".:postgresql.jar", "LegacyDocumentService"]
+CMD ["java", "-Xmx256m", "-Xms64m", "-Djdk.tls.client.protocols=TLSv1.2", "-Djdk.tls.disabledAlgorithms=", "-cp", ".:postgresql.jar", "LegacyDocumentService"]
