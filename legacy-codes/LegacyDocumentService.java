@@ -10,6 +10,14 @@ import java.net.InetSocketAddress;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Signature;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,117 +44,136 @@ import java.util.concurrent.atomic.AtomicInteger;
  * ║  #4  HER İSTEKTE ANAHTAR ÜRETİMİ                                 ║
  * ║      2048-bit RSA KeyPair her çağrıda sıfırdan oluşturuluyor.   ║
  * ║      Bu işlem CPU açısından son derece maliyetlidir.            ║
+ * ║                                                                  ║
+ * ║  #5  HER İSTEKTE YENİ DB BAĞLANTISI                              ║
+ * ║      Connection pool yok. Her şablon sorgusunda bağlantı        ║
+ * ║      sıfırdan kurulur → gecikme + bağlantı limitine takılma.    ║
+ * ║                                                                  ║
+ * ║  #6  IN-MEMORY DEPOLAMA                                          ║
+ * ║      İmzalı dokümanlar HashMap'te tutulur. Pod restart'ta       ║
+ * ║      tüm imzalı dokümanlar KAYBOLUR.                            ║
+ * ║                                                                  ║
+ * ║  #7  PAGINATION YOK                                              ║
+ * ║      Tüm imzalı dokümanlar tek seferde RAM'e çekilir.           ║
+ * ║      Binlerce kayıtta OOM kaçınılmazdır.                        ║
  * ╚══════════════════════════════════════════════════════════════════╝
  *
- *  DERLEME : javac LegacyDocumentService.java
- *  ÇALIŞTIR: java LegacyDocumentService
+ *  DERLEME : javac -cp postgresql.jar LegacyDocumentService.java
+ *  ÇALIŞTIR: java -cp .:postgresql.jar LegacyDocumentService
  */
 public class LegacyDocumentService {
 
     // ----------------------------------------------------------------
     // SORUN #1 — Sabit boyutlu, küçük thread havuzu
-    // 10 thread dolduğunda yeni istekler kuyruğa alınır.
-    // Kuyruk da dolduğunda RejectedExecutionException fırlatılır.
     // ----------------------------------------------------------------
     private static final int MAX_THREADS = 10;
     private final ExecutorService threadPool = Executors.newFixedThreadPool(MAX_THREADS);
 
-    private static final AtomicInteger activeRequests = new AtomicInteger(0);
-    private static final AtomicInteger totalRequests  = new AtomicInteger(0);
+    private static final AtomicInteger activeRequests   = new AtomicInteger(0);
+    private static final AtomicInteger totalRequests    = new AtomicInteger(0);
+    private static final AtomicInteger signedDocCounter = new AtomicInteger(0);
 
-    // ================================================================
-    //  SERVER BAŞLATMA
-    // ================================================================
+    // ----------------------------------------------------------------
+    // SORUN #6 — In-memory depolama (restart'ta silinir)
+    //            Yalnızca fallback; gerçek veriler DB'ye yazılır.
+    // ----------------------------------------------------------------
+    private static final Map<Integer, String> signedDocumentsCache = new HashMap<>();
+
+    // ----------------------------------------------------------------
+    // SORUN #5 — DB bağlantı bilgileri env variable'lardan okunur
+    //            (Connection pool YOK — her sorgu için yeni bağlantı)
+    // ----------------------------------------------------------------
+    private static final String DB_URL  = System.getenv("DB_URL")  != null
+            ? System.getenv("DB_URL")
+            : "jdbc:postgresql://localhost:5432/defaultdb?sslmode=require";
+    private static final String DB_USER = System.getenv("DB_USER") != null
+            ? System.getenv("DB_USER")
+            : "postgres";
+    private static final String DB_PASS = System.getenv("DB_PASS") != null
+            ? System.getenv("DB_PASS")
+            : "";
+
+    // ----------------------------------------------------------------
+    // SORUN #5 — Her sorguda yeni Connection (no pool)
+    // ----------------------------------------------------------------
+    private static Connection getNewConnection() throws Exception {
+        // Yapay gecikme: bağlantı kurulumu simülasyonu
+        Thread.sleep(300); // SORUN #2 ile birlikte thread'i bloklar
+        return DriverManager.getConnection(DB_URL, DB_USER, DB_PASS);
+    }
+
+    // ----------------------------------------------------------------
+    // Sunucuyu başlat
+    // ----------------------------------------------------------------
     public void start() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
+        server.setExecutor(threadPool); // SORUN #1: max 10 thread
 
-        server.createContext("/api/documents/process", new DocumentHandler());
-        server.createContext("/api/health",            new HealthHandler());
-        server.createContext("/api/status",            new StatusHandler());
+        server.createContext("/api/templates",       new TemplatesHandler());
+        server.createContext("/api/documents/sign",  new SignDocumentHandler());
+        server.createContext("/api/documents/signed",new SignedListHandler());
+        server.createContext("/api/health",          new HealthHandler());
+        server.createContext("/api/status",          new StatusHandler());
 
-        // Aynı kısıtlı havuzu server executor olarak kullanıyoruz.
-        // Bu da HTTP kabul işlemini ek olarak yavaşlatır.
-        server.setExecutor(threadPool);
         server.start();
+        System.out.println("[Legacy] Server started on :8080");
+        System.out.println("[Legacy] DB_URL  = " + DB_URL);
+        System.out.println("[Legacy] DB_USER = " + DB_USER);
+    }
 
-        System.out.println("╔═══════════════════════════════════════════════════╗");
-        System.out.println("║   AKBANK  —  Legacy Document Service (Java 8)     ║");
-        System.out.println("║   http://localhost:8080                           ║");
-        System.out.println("╠═══════════════════════════════════════════════════╣");
-        System.out.println("║  [!] Maks. eşzamanlı istek : " + MAX_THREADS + "                      ║");
-        System.out.println("║  [!] İşlem süresi / istek  : ~3 saniye (bloklu)  ║");
-        System.out.println("║  [!] OOM riski             : YÜKSEK               ║");
-        System.out.println("╚═══════════════════════════════════════════════════╝");
-        System.out.println();
-        System.out.println("  Doküman İşle  → POST http://localhost:8080/api/documents/process");
-        System.out.println("  Sağlık        → GET  http://localhost:8080/api/health");
-        System.out.println("  Durum         → GET  http://localhost:8080/api/status");
-        System.out.println();
-        System.out.println("  [İPUCU] Sorunu canlı görmek için paralel 15 istek gönderin:");
-        System.out.println("  for i in $(seq 1 15); do curl -s -X POST http://localhost:8080/api/documents/process -d \"Akbank-Doc-$i\" & done");
-        System.out.println();
+    public static void main(String[] args) throws IOException {
+        new LegacyDocumentService().start();
     }
 
     // ================================================================
-    //  HANDLER: POST /api/documents/process
+    // GET /api/templates  — DB'den şablonları çek
     // ================================================================
-    class DocumentHandler implements HttpHandler {
-
+    class TemplatesHandler implements HttpHandler {
         @Override
-        public void handle(HttpExchange exchange) throws IOException {
-
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                sendResponse(exchange, 405, json(
-                    "\"error\"", "\"Sadece POST metodu kabul edilir\""
-                ));
-                return;
-            }
-
-            int requestId = totalRequests.incrementAndGet();
-            int active    = activeRequests.incrementAndGet();
-
-            System.out.println("┌─ [REQUEST-" + requestId + "] Yeni istek alındı");
-            System.out.println("│  Thread       : " + Thread.currentThread().getName());
-            System.out.println("│  Aktif istek  : " + active + " / " + MAX_THREADS);
-
-            if (active >= MAX_THREADS) {
-                System.out.println("│  [!!!] THREAD HAVUZU DOLU — Yeni istekler KUYRUKTA bekliyor!");
-            }
-
+        public void handle(HttpExchange ex) throws IOException {
+            totalRequests.incrementAndGet();
+            activeRequests.incrementAndGet();
             try {
-                String documentContent = readBody(exchange.getRequestBody());
-                if (documentContent.isEmpty()) {
-                    documentContent = "Akbank Varsayilan Dokumani - Musteri #" + requestId;
+                if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+                    sendResponse(ex, 405, "{\"error\":\"Method Not Allowed\"}");
+                    return;
                 }
 
-                long start = System.currentTimeMillis();
+                // SORUN #5 — yeni bağlantı aç
+                List<Map<String, String>> templates = new ArrayList<>();
+                try (Connection conn = getNewConnection()) {
+                    String sql = "SELECT id, name, description, version FROM document_templates ORDER BY id";
+                    try (PreparedStatement ps = conn.prepareStatement(sql);
+                         ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            Map<String, String> t = new HashMap<>();
+                            t.put("id",          String.valueOf(rs.getInt("id")));
+                            t.put("name",        rs.getString("name"));
+                            t.put("description", rs.getString("description"));
+                            t.put("version",     rs.getString("version"));
+                            templates.add(t);
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("[Legacy] DB error in /api/templates: " + e.getMessage());
+                    sendResponse(ex, 500, "{\"error\":\"DB connection failed: " + e.getMessage().replace("\"","'") + "\"}");
+                    return;
+                }
 
-                // ADIM 1 — PDF dönüşümü (1 sn blokluyor)
-                byte[] pdfData = convertToPdf(documentContent);
+                StringBuilder sb = new StringBuilder("[");
+                for (int i = 0; i < templates.size(); i++) {
+                    if (i > 0) sb.append(",");
+                    Map<String, String> t = templates.get(i);
+                    sb.append("{")
+                      .append("\"id\":").append(t.get("id")).append(",")
+                      .append("\"name\":\"").append(t.get("name")).append("\",")
+                      .append("\"description\":\"").append(t.get("description")).append("\",")
+                      .append("\"version\":\"").append(t.get("version")).append("\"")
+                      .append("}");
+                }
+                sb.append("]");
+                sendResponse(ex, 200, sb.toString());
 
-                // ADIM 2 — RSA imzalama (2 sn blokluyor)
-                byte[] signature = signDocument(pdfData);
-
-                long durationMs = System.currentTimeMillis() - start;
-
-                String body = "{\n"
-                    + "  \"requestId\"       : " + requestId + ",\n"
-                    + "  \"status\"          : \"SUCCESS\",\n"
-                    + "  \"documentSizeByte\": " + pdfData.length + ",\n"
-                    + "  \"signatureSizeByte\": " + signature.length + ",\n"
-                    + "  \"processingTimeMs\": " + durationMs + ",\n"
-                    + "  \"threadName\"      : \"" + Thread.currentThread().getName() + "\",\n"
-                    + "  \"warning\"         : \"Bu thread " + durationMs + " ms boyunca BLOKLANMIŞTIR.\"\n"
-                    + "}";
-
-                sendResponse(exchange, 200, body);
-
-                System.out.println("│  Süre         : " + durationMs + " ms");
-                System.out.println("└─ [REQUEST-" + requestId + "] Tamamlandı.");
-
-            } catch (Exception e) {
-                sendResponse(exchange, 500, json("\"error\"", "\"" + e.getMessage() + "\""));
-                System.err.println("└─ [HATA] Request #" + requestId + ": " + e.getMessage());
             } finally {
                 activeRequests.decrementAndGet();
             }
@@ -154,157 +181,272 @@ public class LegacyDocumentService {
     }
 
     // ================================================================
-    //  HANDLER: GET /api/health
+    // POST /api/documents/sign  — Şablon DB'den çek, imzala, DB'ye kaydet
+    // ================================================================
+    class SignDocumentHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange ex) throws IOException {
+            totalRequests.incrementAndGet();
+            activeRequests.incrementAndGet();
+            try {
+                if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+                    sendResponse(ex, 405, "{\"error\":\"Method Not Allowed\"}");
+                    return;
+                }
+
+                String body = readBody(ex);
+                int templateId   = parseIntField(body, "templateId");
+                String customerId   = parseField(body, "customerId");
+                String customerName = parseField(body, "customerName");
+
+                if (templateId <= 0 || customerId.isEmpty() || customerName.isEmpty()) {
+                    sendResponse(ex, 400, "{\"error\":\"templateId, customerId ve customerName zorunludur\"}");
+                    return;
+                }
+
+                // SORUN #3 — büyük byte dizisi heap'e
+                byte[] documentData = new byte[512 * 1024];
+                for (int i = 0; i < documentData.length; i++) documentData[i] = (byte)(i % 256);
+
+                // SORUN #2 — thread'i 3 sn bloklayan işlem simülasyonu
+                try { Thread.sleep(3000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+
+                // SORUN #4 — her istekte RSA KeyPair üretimi
+                String signatureHex;
+                try {
+                    KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+                    kpg.initialize(2048);
+                    KeyPair kp = kpg.generateKeyPair();
+                    Signature sig = Signature.getInstance("SHA256withRSA");
+                    sig.initSign(kp.getPrivate());
+                    sig.update(documentData, 0, Math.min(1024, documentData.length));
+                    byte[] sigBytes = sig.sign();
+                    StringBuilder hex = new StringBuilder();
+                    for (byte b : sigBytes) hex.append(String.format("%02x", b));
+                    signatureHex = hex.toString();
+                } catch (Exception e) {
+                    sendResponse(ex, 500, "{\"error\":\"Signature error: " + e.getMessage() + "\"}");
+                    return;
+                }
+
+                // SORUN #5 — yeni bağlantı aç, şablonu çek ve imzalı dokümanı kaydet
+                int newDocId;
+                try (Connection conn = getNewConnection()) {
+                    // Şablonu çek
+                    String templateContent;
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "SELECT content FROM document_templates WHERE id=?")) {
+                        ps.setInt(1, templateId);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (!rs.next()) {
+                                sendResponse(ex, 404, "{\"error\":\"Template not found: " + templateId + "\"}");
+                                return;
+                            }
+                            templateContent = rs.getString("content");
+                        }
+                    }
+
+                    // Değişken yerine koy
+                    templateContent = templateContent
+                        .replace("{{MUSTERI_ADI}}", customerName)
+                        .replace("{{TC_NO}}", customerId)
+                        .replace("{{FIRMA_ADI}}", customerName)
+                        .replace("{{KREDI_TUTARI}}", "0")
+                        .replace("{{VADE}}", "0")
+                        .replace("{{FAIZ}}", "0")
+                        .replace("{{LIMIT}}", "0")
+                        .replace("{{KART_TURU}}", "Standart")
+                        .replace("{{ADRES}}", "-")
+                        .replace("{{VERGI_NO}}", customerId);
+
+                    // SORUN #6 — aynı zamanda DB'ye de yaz (ama cache'de de tutuyoruz)
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "INSERT INTO signed_documents(template_id,customer_id,customer_name,signature_data) VALUES(?,?,?,?) RETURNING id")) {
+                        ps.setInt(1, templateId);
+                        ps.setString(2, customerId);
+                        ps.setString(3, customerName);
+                        ps.setString(4, signatureHex.substring(0, Math.min(64, signatureHex.length())));
+                        try (ResultSet rs = ps.executeQuery()) {
+                            rs.next();
+                            newDocId = rs.getInt(1);
+                        }
+                    }
+
+                    // SORUN #6 — in-memory cache (gereksiz duplicate)
+                    int cacheKey = signedDocCounter.incrementAndGet();
+                    signedDocumentsCache.put(cacheKey, templateContent);
+
+                } catch (Exception e) {
+                    System.err.println("[Legacy] DB error in /api/documents/sign: " + e.getMessage());
+                    sendResponse(ex, 500, "{\"error\":\"DB error: " + e.getMessage().replace("\"","'") + "\"}");
+                    return;
+                }
+
+                String resp = "{\"documentId\":" + newDocId
+                    + ",\"customerId\":\"" + customerId + "\""
+                    + ",\"customerName\":\"" + customerName + "\""
+                    + ",\"templateId\":" + templateId
+                    + ",\"signatureLength\":" + signatureHex.length()
+                    + ",\"status\":\"SIGNED\"}";
+                sendResponse(ex, 200, resp);
+
+            } finally {
+                activeRequests.decrementAndGet();
+            }
+        }
+    }
+
+    // ================================================================
+    // GET /api/documents/signed  — SORUN #7: pagination yok, hepsi RAM'e
+    // ================================================================
+    class SignedListHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange ex) throws IOException {
+            totalRequests.incrementAndGet();
+            activeRequests.incrementAndGet();
+            try {
+                if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+                    sendResponse(ex, 405, "{\"error\":\"Method Not Allowed\"}");
+                    return;
+                }
+
+                // SORUN #7 — tüm kayıtlar tek sorguda, LIMIT/OFFSET yok
+                List<Map<String, Object>> docs = new ArrayList<>();
+                try (Connection conn = getNewConnection()) {
+                    String sql = "SELECT id, template_id, customer_id, customer_name, signed_at FROM signed_documents ORDER BY id";
+                    try (PreparedStatement ps = conn.prepareStatement(sql);
+                         ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            Map<String, Object> d = new HashMap<>();
+                            d.put("id",           rs.getInt("id"));
+                            d.put("templateId",   rs.getInt("template_id"));
+                            d.put("customerId",   rs.getString("customer_id"));
+                            d.put("customerName", rs.getString("customer_name"));
+                            d.put("signedAt",     String.valueOf(rs.getTimestamp("signed_at")));
+                            docs.add(d);
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("[Legacy] DB error in /api/documents/signed: " + e.getMessage());
+                    sendResponse(ex, 500, "{\"error\":\"DB error: " + e.getMessage().replace("\"","'") + "\"}");
+                    return;
+                }
+
+                StringBuilder sb = new StringBuilder("{\"total\":" + docs.size() + ",\"documents\":[");
+                for (int i = 0; i < docs.size(); i++) {
+                    if (i > 0) sb.append(",");
+                    Map<String, Object> d = docs.get(i);
+                    sb.append("{")
+                      .append("\"id\":").append(d.get("id")).append(",")
+                      .append("\"templateId\":").append(d.get("templateId")).append(",")
+                      .append("\"customerId\":\"").append(d.get("customerId")).append("\",")
+                      .append("\"customerName\":\"").append(d.get("customerName")).append("\",")
+                      .append("\"signedAt\":\"").append(d.get("signedAt")).append("\"")
+                      .append("}");
+                }
+                sb.append("]}");
+                sendResponse(ex, 200, sb.toString());
+
+            } finally {
+                activeRequests.decrementAndGet();
+            }
+        }
+    }
+
+    // ================================================================
+    // GET /api/health
     // ================================================================
     class HealthHandler implements HttpHandler {
-
         @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            int active = activeRequests.get();
-            String status = (active >= MAX_THREADS) ? "DEGRADED" : "UP";
-
-            String body = "{\n"
-                + "  \"status\"     : \"" + status + "\",\n"
-                + "  \"service\"    : \"LegacyDocumentService\",\n"
-                + "  \"javaVersion\": \"" + System.getProperty("java.version") + "\",\n"
-                + "  \"maxThreads\" : " + MAX_THREADS + ",\n"
-                + "  \"activeNow\"  : " + active + ",\n"
-                + "  \"warning\"    : \""
-                + (active >= MAX_THREADS
-                    ? "Thread havuzu DOLU! Yeni istekler sırada bekliyor!"
-                    : "Sistem calisiyor, ancak mimari kirilgan.")
-                + "\"\n"
-                + "}";
-
-            sendResponse(exchange, 200, body);
+        public void handle(HttpExchange ex) throws IOException {
+            String dbStatus = "OK";
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASS)) {
+                conn.isValid(2);
+            } catch (Exception e) {
+                dbStatus = "ERROR: " + e.getMessage().replace("\"","'");
+            }
+            String body = "{\"status\":\"UP\",\"db\":\"" + dbStatus + "\"}";
+            sendResponse(ex, 200, body);
         }
     }
 
     // ================================================================
-    //  HANDLER: GET /api/status
+    // GET /api/status
     // ================================================================
     class StatusHandler implements HttpHandler {
-
         @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            Runtime rt       = Runtime.getRuntime();
-            long usedMB      = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
-            long maxMB       = rt.maxMemory() / (1024 * 1024);
-            int  active      = activeRequests.get();
-            int  total       = totalRequests.get();
-
-            String body = "{\n"
-                + "  \"service\"             : \"Akbank Legacy Document Service\",\n"
-                + "  \"version\"             : \"Java 8 — Bloklayan Mimari\",\n"
-                + "  \"totalRequests\"       : " + total + ",\n"
-                + "  \"activeRequests\"      : " + active + ",\n"
-                + "  \"maxConcurrentCapacity\": " + MAX_THREADS + ",\n"
-                + "  \"heapUsedMB\"          : " + usedMB + ",\n"
-                + "  \"heapMaxMB\"           : " + maxMB + ",\n"
-                + "  \"knownProblems\": [\n"
-                + "    \"Yalnizca " + MAX_THREADS + " esz. istek islenebilir — 11.'si KUYRUKTA bekler\",\n"
-                + "    \"Her istek ~3 sn thread'i BLOKLAR, bos bekleme = kaynak israfi\",\n"
-                + "    \"Her istekte devasa byte[] heap'e yuklenir — OOM riski\",\n"
-                + "    \"Her istekte 2048-bit RSA KeyPair uretilir — CPU israfi\"\n"
-                + "  ]\n"
-                + "}";
-
-            sendResponse(exchange, 200, body);
+        public void handle(HttpExchange ex) throws IOException {
+            String body = "{"
+                + "\"service\":\"legacy-document-service\","
+                + "\"version\":\"1.0.0-legacy\","
+                + "\"activeRequests\":"  + activeRequests.get()  + ","
+                + "\"totalRequests\":"   + totalRequests.get()   + ","
+                + "\"maxThreads\":"      + MAX_THREADS            + ","
+                + "\"signedDocsCache\":" + signedDocCounter.get() + ","
+                + "\"knownIssues\":["
+                + "\"#1 Limited thread pool (max 10)\","
+                + "\"#2 Blocking architecture (3s sleep per request)\","
+                + "\"#3 Large byte array per request (OOM risk)\","
+                + "\"#4 RSA KeyPair generated per request (CPU waste)\","
+                + "\"#5 New DB connection per request (no pool)\","
+                + "\"#6 In-memory cache duplicates DB data\","
+                + "\"#7 No pagination on signed documents\""
+                + "]}";
+            sendResponse(ex, 200, body);
         }
     }
 
     // ================================================================
-    //  LEGACY BUSINESS LOGIC  (Sorunların kalbi burası)
+    // Yardımcı metodlar
     // ================================================================
-
-    /**
-     * SORUN #2 + #3
-     * - Thread 1000 ms boyunca Thread.sleep() ile BLOKLANIR.
-     * - İçerik boyutunun 100 katı büyüklüğünde byte[] heap'e yazılır.
-     *   Yüksek trafikte GC baskısı → "java.lang.OutOfMemoryError: Java heap space"
-     */
-    private byte[] convertToPdf(String content) throws InterruptedException {
-        System.out.println("│  [PDF] Donusum basliyor... (1 sn blokluyor)");
-
-        // SORUN #3 — Her istek için gereksiz büyük bellek tahsisi
-        byte[] contentBytes   = content.getBytes();
-        byte[] pdfSimulation  = new byte[contentBytes.length * 100]; // 100x şişirme!
-        System.arraycopy(contentBytes, 0, pdfSimulation, 0, contentBytes.length);
-
-        // SORUN #2 — Senkron bekleme: Thread bu süre boyunca hiçbir iş yapamaz
-        Thread.sleep(1000);
-
-        System.out.println("│  [PDF] Tamamlandi. Boyut: " + pdfSimulation.length + " byte");
-        return pdfSimulation;
-    }
-
-    /**
-     * SORUN #2 + #4
-     * - Thread 2000 ms boyunca Thread.sleep() ile BLOKLANIR.
-     * - Her çağrıda 2048-bit RSA KeyPair sıfırdan üretilir.
-     *   Bu, CPU açısından son derece pahalı bir işlemdir.
-     *   Gerçek sistemde bu key bir kez üretilip cache'lenmelidir.
-     */
-    private byte[] signDocument(byte[] pdfData) throws Exception {
-        System.out.println("│  [RSA] 2048-bit imzalama basliyor... (2 sn blokluyor)");
-
-        // SORUN #4 — Her istekte yeni KeyPair üretimi: çok maliyetli!
-        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
-        keyGen.initialize(2048);
-        KeyPair pair = keyGen.generateKeyPair();
-
-        Signature rsa = Signature.getInstance("SHA256withRSA");
-        rsa.initSign(pair.getPrivate());
-        rsa.update(pdfData);
-
-        // SORUN #2 — Dış servis gecikmesi simülasyonu (e-imza gateway, HSM vb.)
-        Thread.sleep(2000);
-
-        byte[] signature = rsa.sign();
-        System.out.println("│  [RSA] Imzalandi. Imza boyutu: " + signature.length + " byte");
-        return signature;
-    }
-
-    // ================================================================
-    //  YARDIMCI METODLAR
-    // ================================================================
-
-    /** Java 8 uyumlu request body okuyucu (InputStream.readAllBytes() Java 9+) */
-    private String readBody(InputStream is) throws IOException {
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        byte[] chunk = new byte[1024];
-        int bytesRead;
-        while ((bytesRead = is.read(chunk)) != -1) {
-            buffer.write(chunk, 0, bytesRead);
-        }
-        return buffer.toString("UTF-8");
-    }
-
-    private void sendResponse(HttpExchange exchange, int statusCode, String body) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+    private static void sendResponse(HttpExchange ex, int code, String body) throws IOException {
         byte[] bytes = body.getBytes("UTF-8");
-        exchange.sendResponseHeaders(statusCode, bytes.length);
-        try (OutputStream os = exchange.getResponseBody()) {
+        ex.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+        ex.sendResponseHeaders(code, bytes.length);
+        try (OutputStream os = ex.getResponseBody()) {
             os.write(bytes);
         }
     }
 
-    /** Tek satırlık mini JSON yardımcısı */
-    private String json(String key, String value) {
-        return "{ " + key + ": " + value + " }";
+    private static String readBody(HttpExchange ex) throws IOException {
+        try (InputStream is = ex.getRequestBody();
+             ByteArrayOutputStream buf = new ByteArrayOutputStream()) {
+            byte[] tmp = new byte[1024];
+            int n;
+            while ((n = is.read(tmp)) != -1) buf.write(tmp, 0, n);
+            return buf.toString("UTF-8");
+        }
     }
 
-    // ================================================================
-    //  MAIN
-    // ================================================================
-    public static void main(String[] args) throws IOException {
-        new LegacyDocumentService().start();
+    private static String parseField(String json, String key) {
+        String search = "\"" + key + "\"";
+        int idx = json.indexOf(search);
+        if (idx < 0) return "";
+        int colon = json.indexOf(":", idx);
+        if (colon < 0) return "";
+        int start = json.indexOf("\"", colon);
+        if (start < 0) return "";
+        int end = json.indexOf("\"", start + 1);
+        if (end < 0) return "";
+        return json.substring(start + 1, end);
+    }
 
-        // JVM'yi canlı tutmak için — gerçek uygulamada lifecycle yönetimi gerekir
-        try {
-            Thread.currentThread().join();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+    private static int parseIntField(String json, String key) {
+        String search = "\"" + key + "\"";
+        int idx = json.indexOf(search);
+        if (idx < 0) return -1;
+        int colon = json.indexOf(":", idx);
+        if (colon < 0) return -1;
+        StringBuilder num = new StringBuilder();
+        for (int i = colon + 1; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (Character.isDigit(c)) num.append(c);
+            else if (num.length() > 0) break;
         }
+        try { return Integer.parseInt(num.toString()); } catch (NumberFormatException e) { return -1; }
+    }
+
+    private static void simulateSlowOperation() {
+        try { Thread.sleep(3000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 }

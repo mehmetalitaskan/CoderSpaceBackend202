@@ -1,4 +1,5 @@
 # Kubernetes kubeconfig dosyaları - token içerdiği için gönderilmez
 *kubeconfig*
+legacy-codes/k8s/db-secret.yaml
 *kubeconfig.yaml
 *.kubeconfig

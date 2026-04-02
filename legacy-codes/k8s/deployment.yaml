@@ -22,6 +22,22 @@ spec:
           image: IMAGE_PLACEHOLDER
           ports:
             - containerPort: 8080
+          env:
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: legacy-db-secret
+                  key: DB_URL
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: legacy-db-secret
+                  key: DB_USER
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: legacy-db-secret
+                  key: DB_PASS
           resources:
             requests:
               memory: "128Mi"
