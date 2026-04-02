@@ -43,3 +43,5 @@ spec:
             initialDelaySeconds: 45
             periodSeconds: 10
             failureThreshold: 5
+      imagePullSecrets:
+        - name: registry-coderspace-backend202
