@@ -1,0 +1,4 @@
+# Kubernetes kubeconfig dosyaları - token içerdiği için gönderilmez
+*kubeconfig*
+*kubeconfig.yaml
+*.kubeconfig
