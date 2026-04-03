@@ -6,7 +6,7 @@ metadata:
   labels:
     app: modern-document-service
 spec:
-  type: ClusterIP       # Cluster içi erişim — dışarıya Ingress ile açılır
+  type: LoadBalancer    # Dışarıya açık — DO Load Balancer otomatik IP atar
   selector:
     app: modern-document-service
   ports:

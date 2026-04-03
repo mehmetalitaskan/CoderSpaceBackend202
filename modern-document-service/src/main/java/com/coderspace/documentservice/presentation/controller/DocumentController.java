@@ -8,7 +8,9 @@ import com.coderspace.documentservice.application.service.DocumentService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -73,6 +75,21 @@ public class DocumentController {
     public ResponseEntity<SignedDocumentResponse> getSignedDocumentById(
             @PathVariable Long id) {
         return ResponseEntity.ok(documentService.findSignedDocumentById(id));
+    }
+
+    /**
+     * İmzalı belgeyi PDF formatında indir.
+     * GET /api/documents/pdf/{id} → 200 OK (application/pdf)
+     */
+    @GetMapping("/documents/pdf/{id}")
+    public ResponseEntity<byte[]> getDocumentAsPdf(@PathVariable Long id) {
+        SignedDocumentResponse doc = documentService.findSignedDocumentById(id);
+        byte[] pdfBytes = documentService.generatePdf(id);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDispositionFormData("inline",
+                "imzali-dokuman-" + id + ".pdf");
+        return new ResponseEntity<>(pdfBytes, headers, HttpStatus.OK);
     }
 
     /**

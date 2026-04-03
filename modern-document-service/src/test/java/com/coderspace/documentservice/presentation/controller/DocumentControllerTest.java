@@ -62,7 +62,8 @@ class DocumentControllerTest {
     void signDocument_WithValidRequest_ShouldReturn201() throws Exception {
         // given
         SignedDocumentResponse response = new SignedDocumentResponse(
-                1L, 1, "12345678901", "Ali Yılmaz", "a".repeat(64), Instant.now());
+                1L, 1, "12345678901", "Ali Yılmaz", "a".repeat(64), Instant.now(),
+                "/api/documents/pdf/1");
         when(documentService.signDocument(any())).thenReturn(response);
 
         String requestBody = """

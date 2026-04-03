@@ -20,4 +20,6 @@ public interface DocumentService {
     Page<SignedDocumentResponse> findSignedDocuments(int page, int size);
 
     SignedDocumentResponse findSignedDocumentById(Long id);
+
+    byte[] generatePdf(Long id);
 }

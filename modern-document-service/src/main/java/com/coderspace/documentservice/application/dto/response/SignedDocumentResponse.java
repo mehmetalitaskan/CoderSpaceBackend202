@@ -8,5 +8,6 @@ public record SignedDocumentResponse(
         String customerId,
         String customerName,
         String signatureHash,
-        Instant signedAt
+        Instant signedAt,
+        String documentUrl
 ) {}
